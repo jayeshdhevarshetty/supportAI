@@ -1,0 +1,9 @@
+node_modules/
+dist/
+backend/.venv/
+backend/*.db
+__pycache__/
+.env
+*.docx
+*.xlsx
+.DS_Store
