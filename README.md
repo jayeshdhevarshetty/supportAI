@@ -62,6 +62,16 @@ This means normal discussion can stay in the ticket, while RAG only learns from 
 - Clickable incident references and in-app incident tabs, so engineers can inspect historical tickets without losing the incident they are working on.
 - Local Ollama embeddings and local caching, so incident data stays on the machine.
 
+## Screenshots
+
+### Incident queue
+
+![SupportAI incident queue](docs/screenshots/incident-queue.png)
+
+### AI evidence for an open incident
+
+![SupportAI AI evidence panel](docs/screenshots/ai-evidence-panel.png)
+
 ## Demo examples
 
 The project includes synthetic closed incidents and active test tickets for common production-support situations such as
