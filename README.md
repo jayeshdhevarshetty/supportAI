@@ -1,26 +1,24 @@
 # SupportAI
 
-SupportAI is a local AI-powered incident analysis project for application and production support teams. I built it to reduce manual incident search, avoid repeated guesswork, lower unnecessary storage and AI-context cost, and help engineers reach the right next action faster.
+### Broken again? We have seen it before.
 
-Instead of sending the full history of every old ticket to AI, SupportAI saves only the useful parts of a closed incident: the first issue description and the final closing comment. This makes the knowledge base smaller, cheaper to store and retrieve, and more focused than searching through every update, transfer comment, log dump, and team conversation.
+I made SupportAI because I saw this problem in production support. When an incident comes, people search old tickets, read many comments, ask different teams what happened before, and still may not know what to do next.
 
-## Why I built this
+## A real problem behind this project
 
-In production support, engineers can lose time searching old tickets, reading long comment histories, asking other teams for prior fixes, and trying actions that may not match the real issue. The same problem can also return with different wording. For example, one ticket may say **Application Down** while another says **URL not responding**.
+One time I was getting repeated **Application Down** incidents. Every time we checked, the application was working. I looked at old incidents and saw that they were happening after the nightly restart.
 
-SupportAI uses RAG to retrieve only useful closed-incident evidence and show what was found before, what resolved it, and which logs were important. This gives the engineer a faster starting point without claiming that an old cause is automatically the new cause.
+The application was not actually down. The monitoring script was checking the application 5 seconds after startup, but the application needed more time to become ready. We changed the delay from 5 seconds to 15 seconds. After that, the false alerts stopped.
 
-## How SupportAI reduces time and cost
+Later, the same issue can come with a different title like **URL not responding** or **application crashed**. Without a tool, someone may not connect it with the old fix. They start checking from zero again. This is why I made SupportAI.
 
-| Problem in normal incident support | What SupportAI does |
-| --- | --- |
-| Engineers manually search many old tickets | Retrieves the most relevant closed incidents automatically |
-| Old tickets contain long updates, transfers, and discussion | Uses only the initial description and final closure as AI knowledge |
-| Sending full ticket histories to an AI model increases context size and cost | Keeps retrieval compact by storing only decision-useful evidence |
-| Different ticket wording hides similar past issues | Uses semantic RAG matching, not only exact titles |
-| Previous fixes are hard to verify | Shows the historical cause, resolution, and log evidence with the incident number |
+## My idea
 
-The goal is not to replace the support engineer. The goal is to reduce low-value searching and give the engineer better evidence before they decide what to do.
+When an incident is created, SupportAI keeps the title, application, and first description. When it is closed, it keeps only the final closing comment. That comment has the cause, impact, actions, and useful logs.
+
+It does **not** send every update, transfer comment, or long team discussion to AI. Keeping only the useful parts means less data to store, less data for AI to search, lower cost later, and faster results.
+
+SupportAI uses RAG to compare a new issue with old closed incidents. It can understand that **Application Down** and **URL not responding** can be about a similar issue even when the words are different. Then it shows the old incident number, what caused it, what fixed it, and the logs that helped us understand it.
 
 ## How it works
 
@@ -38,7 +36,7 @@ Relevant closed-incident evidence
 Start-here checks + previous cause + resolution + log evidence
 ```
 
-SupportAI gives more importance to the incident title and initial alert when matching. The final closing comment is used as supporting evidence after a relevant incident is found.
+SupportAI gives more importance to the incident title and initial alert when matching. The final closing comment is used as supporting evidence after a relevant incident is found. It does not replace the support engineer. It gives the engineer a better starting point instead of making them search from zero.
 
 ## What AI can and cannot use
 
@@ -56,7 +54,7 @@ This means normal discussion can stay in the ticket, while RAG only learns from 
 - Incident queues for VEXCAPUNIX, LEXIXUNIX, MARCAPUNIX, KINEPUNIX, and ADMIN.
 - Create, OPEN/TIA, update, transfer, close, and reopen workflows with an immutable timeline.
 - Active incidents, closed incidents, and a separate search view.
-- RAG guidance that shows:
+- RAG guidance shows the following
   - **Start here** checks for the current incident
   - The closest matching closed incident
   - Its confirmed cause, previous resolution, and relevant logs
@@ -66,7 +64,7 @@ This means normal discussion can stay in the ticket, while RAG only learns from 
 
 ## Demo examples
 
-The project includes synthetic closed incidents and active test tickets for common production-support situations:
+The project includes synthetic closed incidents and active test tickets for common production-support situations such as
 
 - Filesystem capacity and `/users` mount issues
 - Inbound files, CFT/SFTP transfers, and delayed payloads
@@ -80,7 +78,7 @@ Try opening **INC-0111** or **INC-0112**. Their titles are different from the cl
 
 ## Run locally
 
-Install the frontend and backend dependencies once:
+Install the frontend and backend dependencies once.
 
 ```bash
 npm install
@@ -88,21 +86,21 @@ python3 -m venv backend/.venv
 backend/.venv/bin/pip install -r backend/requirements.txt
 ```
 
-Start the backend in one terminal:
+Start the backend in one terminal.
 
 ```bash
 cd backend
 ./.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Start Ollama in a second terminal:
+Start Ollama in a second terminal.
 
 ```bash
 ollama pull nomic-embed-text
 ollama serve
 ```
 
-Start the frontend in a third terminal:
+Start the frontend in a third terminal.
 
 ```bash
 npm run dev
