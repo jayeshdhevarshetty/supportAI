@@ -1,14 +1,26 @@
 # SupportAI
 
-SupportAI is a local AI-powered incident analysis project for application and production support teams. I built it to reduce the time engineers spend searching old tickets and guessing what to check next.
+SupportAI is a local AI-powered incident analysis project for application and production support teams. I built it to reduce manual incident search, avoid repeated guesswork, lower unnecessary storage and AI-context cost, and help engineers reach the right next action faster.
 
-Instead of sending the full history of every old ticket to AI, SupportAI saves only the useful parts of a closed incident: the first issue description and the final closing comment. This keeps the knowledge smaller, easier to search, and more focused.
+Instead of sending the full history of every old ticket to AI, SupportAI saves only the useful parts of a closed incident: the first issue description and the final closing comment. This makes the knowledge base smaller, cheaper to store and retrieve, and more focused than searching through every update, transfer comment, log dump, and team conversation.
 
 ## Why I built this
 
-In support work, the same issue can happen again with different wording. For example, one ticket may say **Application Down** while another says **URL not responding**. The title may be different, but the real issue can still be related.
+In production support, engineers can lose time searching old tickets, reading long comment histories, asking other teams for prior fixes, and trying actions that may not match the real issue. The same problem can also return with different wording. For example, one ticket may say **Application Down** while another says **URL not responding**.
 
-SupportAI uses RAG to look for similar closed incidents and show the engineer what was found before, what resolved it, and which logs were important. It does not claim that the old cause is automatically the new cause.
+SupportAI uses RAG to retrieve only useful closed-incident evidence and show what was found before, what resolved it, and which logs were important. This gives the engineer a faster starting point without claiming that an old cause is automatically the new cause.
+
+## How SupportAI reduces time and cost
+
+| Problem in normal incident support | What SupportAI does |
+| --- | --- |
+| Engineers manually search many old tickets | Retrieves the most relevant closed incidents automatically |
+| Old tickets contain long updates, transfers, and discussion | Uses only the initial description and final closure as AI knowledge |
+| Sending full ticket histories to an AI model increases context size and cost | Keeps retrieval compact by storing only decision-useful evidence |
+| Different ticket wording hides similar past issues | Uses semantic RAG matching, not only exact titles |
+| Previous fixes are hard to verify | Shows the historical cause, resolution, and log evidence with the incident number |
+
+The goal is not to replace the support engineer. The goal is to reduce low-value searching and give the engineer better evidence before they decide what to do.
 
 ## How it works
 
@@ -37,7 +49,7 @@ SupportAI gives more importance to the incident title and initial alert when mat
 | Final closing comment | Yes | Yes |
 | Cause, impact, actions, and logs written in the closing comment | Yes | Yes |
 
-This means normal discussion can stay in the ticket, while RAG only learns from the original issue and final resolution.
+This means normal discussion can stay in the ticket, while RAG only learns from the original issue and final resolution. It reduces unnecessary data stored for AI retrieval and keeps the answer focused on evidence that helped close the incident.
 
 ## Main features
 
