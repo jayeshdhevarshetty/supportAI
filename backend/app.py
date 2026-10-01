@@ -105,6 +105,14 @@ def initialize() -> None:
                 conn.execute(f"ALTER TABLE incidents ADD COLUMN {column} {definition}")
             except sqlite3.OperationalError:
                 pass
+        for column, definition in (
+            ("title_hash", "TEXT"),
+            ("title_embedding_json", "TEXT"),
+        ):
+            try:
+                conn.execute(f"ALTER TABLE incident_embeddings ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
         for team in TEAMS:
             conn.execute("INSERT OR IGNORE INTO teams(name) VALUES(?)", (team,))
         conn.execute("INSERT OR IGNORE INTO teams(name) VALUES(?)", (ADMIN_TEAM,))
@@ -330,30 +338,38 @@ def document_text(item: dict) -> str:
     return f"search_document: {item['title']}\n{item['initial_description']}\n{item['closing_comments']}"
 
 
-def cached_document_embeddings(conn: sqlite3.Connection, candidates: list[dict]) -> list[list[float]] | None:
-    """Embed each closed incident once locally, then reuse it for future new tickets."""
+def signal_text(item: dict) -> str:
+    """The short alert signal. Closing detail must not drown out a short incident title."""
+    return f"incident title: {item['title']}\ninitial alert: {item['initial_description']}"
+
+
+def cached_document_embeddings(conn: sqlite3.Connection, candidates: list[dict]) -> list[tuple[list[float], list[float]]] | None:
+    """Cache both full historical context and the short incident signal locally."""
     if not candidates:
         return []
     ids = [item["id"] for item in candidates]
     placeholders = ",".join("?" for _ in ids)
-    saved = {
-        row["incident_id"]: (row["content_hash"], json.loads(row["embedding_json"]))
-        for row in conn.execute(f"SELECT incident_id, content_hash, embedding_json FROM incident_embeddings WHERE incident_id IN ({placeholders})", ids)
-    }
+    saved = {}
+    for row in conn.execute(f"SELECT incident_id, content_hash, embedding_json, title_hash, title_embedding_json FROM incident_embeddings WHERE incident_id IN ({placeholders})", ids):
+        if row["title_hash"] and row["title_embedding_json"]:
+            saved[row["incident_id"]] = (row["content_hash"], json.loads(row["embedding_json"]), row["title_hash"], json.loads(row["title_embedding_json"]))
     hashes = {item["id"]: hashlib.sha256(document_text(item).encode()).hexdigest() for item in candidates}
-    missing = [item for item in candidates if item["id"] not in saved or saved[item["id"]][0] != hashes[item["id"]]]
+    signal_hashes = {item["id"]: hashlib.sha256(signal_text(item).encode()).hexdigest() for item in candidates}
+    missing = [item for item in candidates if item["id"] not in saved or saved[item["id"]][0] != hashes[item["id"]] or saved[item["id"]][2] != signal_hashes[item["id"]]]
     if missing:
-        new_vectors = embed_with_ollama([document_text(item) for item in missing])
-        if not new_vectors or len(new_vectors) != len(missing):
+        new_vectors = embed_with_ollama([document_text(item) for item in missing] + [signal_text(item) for item in missing])
+        if not new_vectors or len(new_vectors) != len(missing) * 2:
             return None
-        for item, vector in zip(missing, new_vectors):
+        for index, item in enumerate(missing):
+            vector = new_vectors[index]
+            title_vector = new_vectors[len(missing) + index]
             conn.execute(
-                "INSERT OR REPLACE INTO incident_embeddings(incident_id, content_hash, embedding_json, updated_at) VALUES(?,?,?,?)",
-                (item["id"], hashes[item["id"]], json.dumps(vector), now()),
+                "INSERT OR REPLACE INTO incident_embeddings(incident_id, content_hash, embedding_json, title_hash, title_embedding_json, updated_at) VALUES(?,?,?,?,?,?)",
+                (item["id"], hashes[item["id"]], json.dumps(vector), signal_hashes[item["id"]], json.dumps(title_vector), now()),
             )
-            saved[item["id"]] = (hashes[item["id"]], vector)
+            saved[item["id"]] = (hashes[item["id"]], vector, signal_hashes[item["id"]], title_vector)
         conn.commit()
-    return [saved[item["id"]][1] for item in candidates]
+    return [(saved[item["id"]][1], saved[item["id"]][3]) for item in candidates]
 
 
 def cosine(left: list[float], right: list[float]) -> float:
@@ -371,6 +387,7 @@ def support_signals(text: str) -> set[str]:
         "mq": ("mq", "queue", "consumer", "acknowledg", "message backlog"),
         "database": ("database", "database lock", "transaction", "blocking session", "recon_batch", "table lock"),
         "deployment": ("deployment", "release", "configuration", "endpoint", "package version"),
+        "availability": ("application down", "application unavailable", "url not up", "url not responding", "url not working", "url unavailable", "website down", "health check failed"),
         "tls-trust": ("untrusted issuer", "trust store", "truststore", "pkix", "certification path", "intermediate certificate"),
         "tls-hostname": ("hostname verification", "common name", "endpoint hostname"),
         "tls-expiry": ("certificate expired", "expiry threshold", "expired date"),
@@ -404,17 +421,21 @@ def enrich_evidence(matches: list[dict]) -> list[dict]:
     return matches
 
 
-def diverse_matches(candidates: list[dict], query_embedding: list[float], document_embeddings: list[list[float]], query_text: str, limit: int = 3) -> list[dict]:
-    """Use semantic similarity, but never let diversity introduce a different incident domain."""
-    query_domains = support_signals(query_text)
-    scored = [{**candidate, "_embedding": embedding, "similarity": cosine(query_embedding, embedding)} for candidate, embedding in zip(candidates, document_embeddings)]
-    if query_domains:
-        scored = [item for item in scored if query_domains & support_signals(f"{item['title']}\n{item['initial_description']}\n{item['closing_comments']}")]
+def diverse_matches(candidates: list[dict], query_embedding: list[float], query_signal_embedding: list[float], document_embeddings: list[tuple[list[float], list[float]]], limit: int = 3) -> list[dict]:
+    """Semantic retrieval balances the short alert against the full closed-incident evidence."""
+    scored = [
+        {
+            **candidate,
+            "_embedding": full_embedding,
+            "similarity": 0.45 * cosine(query_embedding, full_embedding) + 0.55 * cosine(query_signal_embedding, title_embedding),
+        }
+        for candidate, (full_embedding, title_embedding) in zip(candidates, document_embeddings)
+    ]
     if not scored:
         return []
     # Keep only near the best result. A vague third 'match' is worse than no match.
     best_similarity = max(item["similarity"] for item in scored)
-    cutoff = max(0.65, best_similarity - 0.12)
+    cutoff = max(0.58, best_similarity - 0.12)
     scored = [item for item in scored if item["similarity"] >= cutoff]
     selected = []
     while scored and len(selected) < limit:
@@ -434,7 +455,7 @@ def grounded_retrieval_summary(matches: list[dict]) -> str:
     prior_cause = closest.get("cause") or "the saved closing evidence"
     return (
         f"Closest comparable incident: INC-{closest['id']:04d} ({closest['application_name']}). "
-        f"Its confirmed cause was: {prior_cause}"
+        f"In that prior incident, the confirmed cause was: {prior_cause}"
     )
 
 
@@ -481,6 +502,12 @@ def suggested_checks(current: dict, matches: list[dict]) -> list[str]:
             "Verify the live runtime value, not just the deployed package version.",
             "Check the environment override, configuration artifact, and refresh task for the release.",
             "Apply the approved configuration correction and complete a targeted smoke test.",
+        ]
+    if "availability" in domains:
+        return [
+            "Confirm the URL response and application readiness before restarting anything.",
+            "Compare the alert timestamp with any recent restart, deployment, or service bounce.",
+            "Check health-check and application startup logs to distinguish a real outage from an early monitoring check.",
         ]
     if "tls-trust" in domains:
         return [
@@ -546,17 +573,24 @@ def recommendation(incident_id: int, wait: bool = True):
                    WHERE i.status = 'Closed' AND i.id != ? ORDER BY i.closed_at DESC LIMIT 120""", (incident_id,)
             ))
             query_text = f"search_query: {current['title']}\n{current['initial_description']}"
-            query_vectors = embed_with_ollama([query_text]) if candidates else None
+            query_vectors = embed_with_ollama([query_text, signal_text(current)]) if candidates else None
             document_vectors = cached_document_embeddings(conn, candidates) if candidates else None
-            if query_vectors and document_vectors and len(document_vectors) == len(candidates):
+            if query_vectors and len(query_vectors) == 2 and document_vectors and len(document_vectors) == len(candidates):
                 query_vector = query_vectors[0]
+                query_signal_vector = query_vectors[1]
                 same_app = [item for item in candidates if item['application_id'] == current['application_id']]
+                same_app_matches = []
                 if same_app:
                     indices = [index for index, item in enumerate(candidates) if item['application_id'] == current['application_id']]
-                    matches = diverse_matches(same_app, query_vector, [document_vectors[index] for index in indices], query_text)
+                    same_app_matches = diverse_matches(same_app, query_vector, query_signal_vector, [document_vectors[index] for index in indices])
+                all_matches = diverse_matches(candidates, query_vector, query_signal_vector, document_vectors)
+                # Prefer same-application evidence only when it is nearly as relevant as the global best.
+                # This prevents an unrelated local incident from beating a much stronger cross-application match.
+                if same_app_matches and (not all_matches or same_app_matches[0]["similarity"] >= all_matches[0]["similarity"] - 0.06):
+                    matches = same_app_matches
                     level = "Semantic match · Same application"
                 else:
-                    matches = diverse_matches(candidates, query_vector, document_vectors, query_text)
+                    matches = all_matches
                     level = "Semantic match · All applications"
                 retrieval_type = "Semantic similarity"
         if matches:

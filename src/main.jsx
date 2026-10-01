@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Archive, BrainCircuit, CirclePlus, SearchCheck, Zap } from 'lucide-react'
+import { Archive, ArrowLeft, BrainCircuit, CirclePlus, SearchCheck, Zap } from 'lucide-react'
 import './styles.css'
 
 const api = async (path, options) => {
@@ -112,14 +112,14 @@ function Evidence({ label, value }) {
   return value ? <div className="evidence-row"><b>{label}</b><span>{value}</span></div> : null
 }
 
-function Recommendation({ recommendation, minimized, onToggle }) {
+function Recommendation({ recommendation, minimized, onToggle, onOpenIncident }) {
   const [closest, ...alternatives] = recommendation?.matches || []
   return <aside className={`recommendation ${minimized ? 'minimized' : ''}`}>
     <div className="recommendation-head"><div><p className="eyebrow">AI support</p><h3>{recommendation?.mode === 'historical' ? 'Historical evidence' : 'Suggested first checks'}</h3></div><button className="icon-button" onClick={onToggle}>{minimized ? '↗' : '−'}</button></div>
     {!minimized && <>{recommendation?.mode === 'historical' && <p className="retrieval-label">{recommendation.retrieval_type || 'Exact title'} · {recommendation.level}</p>}
       <p className="recommendation-summary">{recommendation?.summary || 'Searching closed-incident knowledge and preparing grounded guidance…'}</p>
       {recommendation?.suggested_checks?.length > 0 && <section className="suggested-checks"><p>Start here</p><ol>{recommendation.suggested_checks.map((check, index) => <li key={index}>{check}</li>)}</ol></section>}
-      {closest && <div className="matches"><p>Closest closed incident</p><div className="match"><strong>INC-{String(closest.id).padStart(4, '0')} · {closest.application_name}</strong><em>{closest.title}</em><Evidence label="Confirmed cause" value={closest.cause} /><Evidence label="What resolved it" value={closest.actions} /><Evidence label="Log evidence" value={closest.log_evidence} /></div>{alternatives.length > 0 && <><p className="alternative-label">Other possible patterns — check separately</p>{alternatives.map(match => <div className="match alternative" key={match.id}><strong>INC-{String(match.id).padStart(4, '0')} · {match.application_name}</strong><em>{match.title}</em><Evidence label="Different cause" value={match.cause} /><Evidence label="Previous resolution" value={match.actions} /></div>)}</>}</div>}
+      {closest && <div className="matches"><p>Closest closed incident</p><div className="match"><button type="button" className="incident-evidence-link" onClick={() => onOpenIncident(closest.id)}>INC-{String(closest.id).padStart(4, '0')} · {closest.application_name}</button><em>{closest.title}</em><Evidence label="Confirmed cause" value={closest.cause} /><Evidence label="What resolved it" value={closest.actions} /><Evidence label="Log evidence" value={closest.log_evidence} /></div>{alternatives.length > 0 && <><p className="alternative-label">Other possible patterns — check separately</p>{alternatives.map(match => <div className="match alternative" key={match.id}><button type="button" className="incident-evidence-link" onClick={() => onOpenIncident(match.id)}>INC-{String(match.id).padStart(4, '0')} · {match.application_name}</button><em>{match.title}</em><Evidence label="Different cause" value={match.cause} /><Evidence label="Previous resolution" value={match.actions} /></div>)}</>}</div>}
       <p className="advisory">Suggestions are advisory. Validate all actions before making changes.</p></>}
   </aside>
 }
@@ -130,6 +130,7 @@ function App() {
   const [activeTeam, setActiveTeam] = useState(null)
   const [incidents, setIncidents] = useState([])
   const [selected, setSelected] = useState(null)
+  const [openTabs, setOpenTabs] = useState([])
   const [recommendation, setRecommendation] = useState(null)
   const [newForm, setNewForm] = useState(false)
   const [minimized, setMinimized] = useState(false)
@@ -139,10 +140,11 @@ function App() {
   const [loading, setLoading] = useState(true)
   const refreshList = async (team = activeTeam) => setIncidents(await api(`/incidents${team ? `?team_id=${team}` : ''}`))
   useEffect(() => { Promise.all([api('/teams'), api('/applications')]).then(([t, a]) => { setTeams(t); setApplications(a) }).finally(() => setLoading(false)) }, [])
-  useEffect(() => { if (!loading) { refreshList().catch(console.error); setSelected(null) } }, [activeTeam, loading])
-  const openIncident = async (id) => { const detail = await api(`/incidents/${id}`); setSelected(detail); setRecommendation(null); setMinimized(false); setPreferredAction(null); const loadGuidance = async () => { const guidance = await api(`/incidents/${id}/recommendation?wait=false`); setRecommendation(guidance); if (guidance.mode === 'pending') setTimeout(() => loadGuidance().catch(console.error), 3500) }; loadGuidance().catch(console.error) }
+  useEffect(() => { if (!loading) { refreshList().catch(console.error); setSelected(null); setOpenTabs([]) } }, [activeTeam, loading])
+  const openIncident = async (id) => { const detail = await api(`/incidents/${id}`); setOpenTabs(current => current.some(tab => tab.id === detail.id) ? current : [...current, { id: detail.id, title: detail.title }]); setSelected(detail); setRecommendation(null); setMinimized(false); setPreferredAction(null); const loadGuidance = async () => { const guidance = await api(`/incidents/${id}/recommendation?wait=false`); setRecommendation(guidance); if (guidance.mode === 'pending') setTimeout(() => loadGuidance().catch(console.error), 3500) }; loadGuidance().catch(console.error) }
   const createIncident = async (payload) => { const created = await api('/incidents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setNewForm(false); await refreshList(); await openIncident(created.id) }
   const act = async (payload) => { await api(`/incidents/${selected.id}/actions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await refreshList(); await openIncident(selected.id) }
+  const closeTab = (id) => { const remaining = openTabs.filter(tab => tab.id !== id); setOpenTabs(remaining); if (selected?.id === id) { const next = remaining.at(-1); if (next) openIncident(next.id); else setSelected(null) } }
   const counts = useMemo(() => ({ open: incidents.filter(i => i.status !== 'Closed').length, critical: incidents.filter(i => i.priority === 'Critical' && i.status !== 'Closed').length, closed: incidents.filter(i => i.status === 'Closed').length }), [incidents])
   const displayedIncidents = useMemo(() => incidents.filter(incident => {
     if (queueMode === 'active' && incident.status === 'Closed') return false
@@ -166,7 +168,8 @@ function App() {
           <div className="incident-list">{displayedIncidents.length === 0 ? <p className="empty-list">{queueMode === 'closed' ? 'No closed incidents in this view.' : queueMode === 'search' ? 'No incidents match your search.' : 'No active incidents in this view.'}</p> : displayedIncidents.map(incident => <button key={incident.id} className={`incident-row ${selected?.id === incident.id ? 'selected' : ''}`} onClick={() => openIncident(incident.id)}><span className="row-check">□</span><span className="incident-id">INC-{String(incident.id).padStart(4, '0')}</span><span className="row-state">{incident.status === 'Acknowledged' ? 'OPEN' : incident.status.toUpperCase()}</span><span className={`priority ${priorityClass(incident.priority)}`}>{incident.priority}</span><strong>{incident.title}</strong><span className="row-app">{incident.application_name}</span></button>)}</div></div>
       </aside>
       <section className="content">{newForm ? <NewIncident applications={applications} onCreated={createIncident} onCancel={() => setNewForm(false)} /> : selected ? <section className="ticket-window">
-        <header className="ticket-titlebar"><span>{selected.current_team_name} · Incident Queue</span><strong>INC-{String(selected.id).padStart(4, '0')} · {selected.title}</strong><button className="icon-button" onClick={() => setSelected(null)}>×</button></header>
+        <div className="open-incident-tabs">{openTabs.map(tab => <div key={tab.id} className={`open-incident-tab ${selected.id === tab.id ? 'active' : ''}`}><button type="button" onClick={() => openIncident(tab.id)}>INC-{String(tab.id).padStart(4, '0')} · {tab.title}</button><button type="button" className="close-incident-tab" onClick={() => closeTab(tab.id)} aria-label={`Close INC-${String(tab.id).padStart(4, '0')}`}>×</button></div>)}</div>
+        <header className="ticket-titlebar"><button type="button" className="back-to-queue" onClick={() => setSelected(null)}><ArrowLeft size={15} /> Back to incident queue</button><strong>INC-{String(selected.id).padStart(4, '0')} · {selected.title}</strong><span>{selected.current_team_name}</span></header>
         <TicketToolbar incident={selected} activeTeam={activeTeam} onChooseAction={setPreferredAction} />
         <section className="incident-details">
           <div className="detail-field"><span>Incident number</span><strong>INC-{String(selected.id).padStart(4, '0')}</strong></div>
@@ -178,7 +181,7 @@ function App() {
           <div className="detail-field description-field"><span>Initial description</span><strong>{selected.initial_description}</strong></div>
         </section>
         <nav className="ticket-tabs"><button className="active">Comments</button><button>Details</button><button>Activities</button><button>AI guidance</button></nav>
-        <section className="comments-workspace"><section className="incident-main"><div className="comments-head"><div><p className="eyebrow">Incident comments</p><h3>Activity</h3></div><span>Immutable timeline</span></div><Timeline comments={selected.comments} /><CommentComposer incident={selected} teams={teams} activeTeam={activeTeam} onAction={act} requestedAction={preferredAction} onActionChange={setPreferredAction} /></section><Recommendation recommendation={recommendation} minimized={minimized} onToggle={() => setMinimized(!minimized)} /></section>
+        <section className="comments-workspace"><section className="incident-main"><div className="comments-head"><div><p className="eyebrow">Incident comments</p><h3>Activity</h3></div><span>Immutable timeline</span></div><Timeline comments={selected.comments} /><CommentComposer incident={selected} teams={teams} activeTeam={activeTeam} onAction={act} requestedAction={preferredAction} onActionChange={setPreferredAction} /></section><Recommendation recommendation={recommendation} minimized={minimized} onToggle={() => setMinimized(!minimized)} onOpenIncident={openIncident} /></section>
       </section> : <section className="empty-state"><p className="eyebrow">Incident Desk</p><h2>Select an incident</h2><p>Choose an incident from the queue to view its comments and support guidance.</p></section>}</section>
     </section>
   </main>
